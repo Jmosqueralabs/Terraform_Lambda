@@ -2,6 +2,7 @@ import json
 import boto3
 import uuid
 import logging
+import os
 from datetime import datetime, timedelta
 from botocore.exceptions import ClientError
 
@@ -9,6 +10,9 @@ from botocore.exceptions import ClientError
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 dynamodb = boto3.resource('dynamodb')
+
+# Obtener nombre de tabla desde variable de entorno
+TABLE_NAME = os.environ.get('TABLE_NAME', 'serverless-app-table')
 
 def lambda_handler(event, context):
     """
@@ -43,7 +47,7 @@ def create_item(data):
     """
     Crear un nuevo item en DynamoDB
     """
-    table = dynamodb.Table('serverless-table')
+    table = dynamodb.Table(TABLE_NAME)
     
     # Usar clave de idempotencia o generar una nueva
     item_id = data.get('idempotencyKey', str(uuid.uuid4()))
@@ -76,17 +80,21 @@ def get_item(item_id):
     if not item_id:
         return {"error": "ID requerido"}
     
-    table = dynamodb.Table('serverless-table')
+    table = dynamodb.Table(TABLE_NAME)
     
     try:
-        response = table.get_item(
-            Key={'PK': f"ITEM#{item_id}", 'SK': f"METADATA"}
+        # Buscar el item más reciente para este ID
+        response = table.query(
+            KeyConditionExpression='PK = :pk',
+            ExpressionAttributeValues={':pk': f"ITEM#{item_id}"},
+            ScanIndexForward=False,  # Orden descendente por SK
+            Limit=1
         )
         
-        if 'Item' not in response:
+        if not response['Items']:
             return {"error": "Item no encontrado"}
         
-        return response['Item']['data']
+        return response['Items'][0]['data']
         
     except ClientError as e:
         logger.error(f"Error DynamoDB: {str(e)}")
@@ -104,4 +112,3 @@ def create_response(status_code, body):
         },
         'body': json.dumps(body)
     }
-    
